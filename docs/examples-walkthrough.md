@@ -6,9 +6,11 @@ Follow along tutorial instructions for the [examples](../examples/).
 
 Notebook examples:
 - N1: [mnist_example](../examples/mnist_example.ipynb)
+    - Simple follow along instructions [here](#n1-mnist-example-walkthrough)
 
 Script examples:
 - S1: [food101_example](../examples/food101_example.py)
+    - Explaination (of code) and slurm submission instructions in [this section](#s1-food101-example-walkthrough)
 
 ### N1: MNIST Example Walkthrough
 
@@ -308,6 +310,247 @@ By completing this notebook, you've:
 
 ---
 
-### S1: Food101 Example
+### S1: Food101 Example Walkthrough
 
-*[To be completed]*
+**What is Food101?**
+Food101 is a real-world dataset containing 101,000 images across 101 food categories (1,000 images per category). Unlike MNIST's simple 28x28 grayscale digits, these are full-color photographs of actual food dishes with varying lighting, backgrounds, and presentation styles. This represents the jump from toy problems to production-scale computer vision.
+
+**Key Differences from MNIST:**
+- **Real dataset**: Download and manage ~5GB of data
+- **Production pipeline**: Efficient data loading with tf.data
+- **Modern architecture**: EfficientNet instead of simple Dense layers  
+- **Hardware optimization**: Mixed precision training, GPU memory management
+- **Script format**: Command-line execution instead of interactive notebook
+- **Longer training**: 1-2 hours instead of minutes
+
+**What you'll learn:**
+- Converting from notebook development to production scripts
+- Managing large datasets and file organization
+- Using modern CNN architectures (EfficientNet)
+- Optimizing training performance with mixed precision
+- Submitting and monitoring long-running Slurm jobs
+- Proper checkpointing and logging for production training
+
+**Expected results:** ~85% accuracy on the test set after 30 epochs (much harder than MNIST's 10 simple digits).
+
+---
+## Understanding the Script Structure
+
+### Hardware & Performance Setup
+```python 
+mixed_precision.set_global_policy("mixed_float16")  # L40 loves this
+strategy = tf.distribute.MirroredStrategy() if num_gpus > 1 else tf.distribute.get_strategy()
+```
+
+**What's happening:** Configures the GPU for optimal performance on Nuros. Mixed precision uses both 16-bit and 32-bit floating point numbers - faster training with minimal accuracy loss on modern GPUs.
+
+### Dataset Management
+```python
+DATA_DIR = HOME / "data" / "food-101"
+# Downloads ~5GB dataset once, extracts to organized structure
+```
+
+**What's happening:** Unlike MNIST's automatic download, this manages real dataset logistics. Downloads once and reuses, creates organized directory structure in `~/data/food-101/`.
+
+**File Organization Benefits:**
+- **Reusable**: Download once, use for multiple experiments
+- **Organized**: Clear separation of raw data, extracted files, and results
+- **Scalable**: Pattern works for any dataset size
+
+### Modern Data Pipeline
+```python
+def make_ds(paths, labels, training=True):
+    ds = tf.data.Dataset.from_tensor_slices((list(map(str, paths)), labels))
+    if training:
+        ds = ds.shuffle(8192, reshuffle_each_iteration=True)
+    ds = ds.map(decode_load_resize, num_parallel_calls=4)
+    # ... data augmentation, batching, prefetching
+```
+
+**What's happening:** Builds an efficient data pipeline that keeps GPUs fed with data. Much more sophisticated than loading everything into memory like MNIST.
+
+**Key concepts:**
+- **Parallel loading**: Multiple CPU threads load images while GPU trains
+- **Data augmentation**: Random flips and color changes prevent overfitting
+- **Prefetching**: Loads next batch while GPU processes current batch
+
+### Model Architecture
+```python
+base = applications.EfficientNetB4(include_top=False, weights=None, input_tensor=input_shape)
+# Note: weights=None means training from scratch (not transfer learning)
+```
+
+**What's happening:** Uses EfficientNetB4, a modern CNN architecture designed for efficiency. Much more sophisticated than MNIST's simple Dense layers. Notice that `weights=None` so we are not loading the pretrained model; instead we just load the layers and train from scratch.
+
+---
+
+## Running with Slurm
+
+### Step 1: Prepare Your Environment
+
+**Upload the script** to Nuros (e.g., in your home directory)
+
+### Step 2: Choose the Right Slurm Template
+
+This job needs significant resources and time. Use the heavy compute template as a starting point:
+
+**File: `food101_job.sbatch`**
+```bash
+#!/bin/bash
+#SBATCH --job-name=food101_efficientnet
+#SBATCH --time=02:30:00              # 2.5 hours (be generous)
+#SBATCH --gres=gpu:1                 # 1 GPU sufficient
+#SBATCH --mem=32G                    # Plenty of RAM for data loading
+#SBATCH --cpus-per-task=8            # Multiple cores for data pipeline
+#SBATCH --output=logs/food101_%j.out
+#SBATCH --error=logs/food101_%j.err
+
+# Environment setup (adjust for your Python setup)
+export TF_FORCE_GPU_ALLOW_GROWTH=true
+
+echo "Starting Food101 training at: $(date)"
+echo "Running on node: $SLURMD_NODENAME" 
+echo "Job ID: $SLURM_JOB_ID"
+
+# Run the training script
+python food101_example.py
+
+echo "Training completed at: $(date)"
+```
+
+### Step 3: Submit the Job
+
+```bash
+# Submit the job
+sbatch food101_job.sbatch
+
+# Check job status
+squeue -u $USER
+
+# Monitor progress (job ID from sbatch output)
+tail -f logs/food101_12345.out
+```
+
+### Step 4: Monitor Progress
+
+**What to watch for in the output:**
+- **Dataset download**: First run downloads ~5GB (adds ~10-15 minutes)
+- **GPU detection**: Should show "Visible GPUs: 1"
+- **Training progress**: Shows loss/accuracy every few epochs (verbose=2)
+- **Checkpoints**: Saves model every epoch to `~/runs/food101_efficientnet/B4/`
+
+**Expected output timeline:**
+```
+# Initial setup (first run only)
+Downloading Food-101 (~5GB)...
+Extracting Food-101...
+
+# Every run
+Visible GPUs: 1
+Classes: 101 Train imgs: 74747 Test imgs: 25250
+Training samples: 73252, Validation samples: 1495
+
+# Training progress
+Epoch 1/30
+... loss: 3.2850 - accuracy: 0.2847 - val_loss: 2.8934 - val_accuracy: 0.3845
+Epoch 2/30
+... loss: 2.7821 - accuracy: 0.4123 - val_loss: 2.5643 - val_accuracy: 0.4521
+...
+Epoch 30/30
+... loss: 0.8234 - accuracy: 0.7823 - val_loss: 1.2345 - val_accuracy: 0.7234
+
+# Final evaluation
+Test: [1.1234, 0.8543]  # [loss, accuracy]
+Throughput: 45.2 images/sec
+```
+
+### Step 5: Check Results
+
+After the job completes, check:
+
+**Checkpoints and logs:**
+```bash
+ls ~/runs/food101_efficientnet/B4/
+# Should contain: ckpt-01.keras, ckpt-02.keras, ..., ckpt-30.keras, log.csv
+```
+
+**Training history:**
+```bash
+head ~/runs/food101_efficientnet/B4/log.csv
+# CSV with epoch, loss, accuracy, val_loss, val_accuracy columns
+```
+
+**Final test accuracy:** Should be around **85%** in the job output.
+
+---
+
+## Common Issues and Solutions
+
+### Job Fails Immediately
+**Check:** Look at the `.err` file for Python import errors or missing dependencies.
+**Solution:** Verify your Python environment has TensorFlow/Keras installed.
+
+### "Out of Memory" Errors
+**Reduce batch size:** Change `BATCH_PER_GPU = 32` to `BATCH_PER_GPU = 16` in the script.
+**More memory:** Request more memory in your sbatch script (`--mem=64G`).
+**Export GPU Growth:** In the Nuros terminal, try `export TF_FORCE_GPU_ALLOW_GROTH=true` which changes how the GPUs allocate memory.
+
+### Job Times Out
+**Longer time limit:** Increase `--time=03:00:00` in your sbatch script.
+**Check progress:** Look at checkpoint files to see how far training got.
+
+### Slow Download on First Run
+**Expected:** 5GB download takes 5-15 minutes depending on connection.
+**One-time only:** Subsequent runs reuse the downloaded data.
+
+### Poor Performance (< 80% accuracy)
+**Check epochs:** Make sure all 30 epochs completed.
+**Verify GPU:** Ensure "Visible GPUs: 1" appears in output.
+**Normal variation:** Results between 83-87% are typical.
+
+---
+
+## Understanding the Results
+
+### What Good Training Looks Like
+Note: these are estimates.
+- **Loss decreases** steadily over epochs
+- **Accuracy increases** from ~28% (epoch 1) to ~85% (epoch 30)  
+- **Validation metrics** track training metrics reasonably closely
+- **Test accuracy** similar to final validation accuracy
+
+### Performance Expectations
+Note: these are estimates.
+- **Throughput**: ~40-60 images/sec on L40 with mixed precision
+- **Memory usage**: ~8-12GB GPU memory with batch size 32
+- **Final accuracy**: 83-87% on test set (Food101 is challenging!)
+
+### File Organization Results
+```
+~/data/food-101/          # Dataset (reusable)
+├── food-101.tar.gz       # Original download
+├── images/               # 101,000 food images
+└── meta/                 # train.txt, test.txt splits
+
+~/runs/food101_efficientnet/B4/  # Experiment results
+├── ckpt-01.keras         # Model checkpoints
+├── ckpt-02.keras         # (one per epoch)
+├── ...
+├── ckpt-30.keras
+└── log.csv              # Training history
+```
+
+---
+
+## What You've Accomplished
+
+Moving from MNIST to Food101 represents a major step toward production machine learning:
+
+1. **Real dataset management** - Download, organize, and process large datasets
+2. **Modern architecture** - Used state-of-the-art EfficientNet instead of basic layers
+3. **Production pipeline** - Efficient data loading that scales to any dataset size
+4. **Hardware optimization** - Leveraged mixed precision and GPU memory management
+5. **Proper experimentation** - Checkpointing, logging, and organized results
+6. **Slurm workflow** - Submitted and monitored long-running training jobs
+
+**You're now ready to tackle real computer vision problems with proper tools and workflows!**
