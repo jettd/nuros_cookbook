@@ -24,7 +24,6 @@ Nuros is our high-performance computing server equipped with:
 nuros_cookbook/
 ├── examples/           # Complete working examples
 │   ├── mnist_example.ipynb          # Simple neural network (beginner-friendly)
-│   ├── mnist_example.py             # Script version of MNIST
 │   ├── food101_example.py           # Advanced: EfficientNet on Food101
 │   └── EXAMPLES.md                    # Guide to examples
 ├── templates/          # Ready-to-use templates
