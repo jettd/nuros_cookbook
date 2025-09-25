@@ -13,7 +13,7 @@ Nuros is our high-performance computing server equipped with:
 
 **New to GPU computing or Slurm?** Start here:
 
-1. 📖 Read the [Typical Workflow Guide](docs/typical-workflow.md)
+1. 📖 Read the [Typical Workflow Guide](docs/typical-workflow.md) 
 2. 🎯 Try the [MNIST Example](examples/mnist_example.ipynb) 
 3. 🔧 Use a [Slurm Template](templates/) to submit your first job
 4. 📚 Explore the [Documentation](docs/) for deeper understanding
@@ -23,22 +23,19 @@ Nuros is our high-performance computing server equipped with:
 ```
 nuros_cookbook/
 ├── examples/           # Complete working examples
-│   ├── mnist_example.ipynb          # Simple neural network (beginner-friendly)
-│   ├── food101_example.py           # Advanced: EfficientNet on Food101
-│   └── EXAMPLES.md                    # Guide to examples
-├── templates/          # Ready-to-use templates
-│   ├── basic_slurm.sbatch          # Minimal GPU job template
-│   ├── heavy_compute.sbatch        # High-resource job template
-│   ├── sequential_model.py         # Basic Keras model template
-│   └── TEMPLATES.md                   # Template usage guide
-├── docs/              # Documentation and guides
+│   ├── mnist_example.ipynb        # Simple feed-forward network (beginner-friendly)
+│   └── food101_example.py         # Advanced: EfficientNet on Food101
+├── templates/                     # Ready-to-use templates
+│   └── basic.sbatch               # Minimal GPU job template
+├── docs/                          # Documentation and guides
 │   ├── slurm-basics.md            # Understanding Slurm commands
 │   ├── typical-workflow.md        # Recommended development process
 │   ├── notebook-to-script.md      # Converting notebooks to scripts
 │   ├── data-management.md         # Getting data onto Nuros
-│   ├── troubleshooting.md         # Common issues and solutions
+│   ├── examples-walkthrough.md    # Detailed tutorials for all examples
+│   ├── troubleshooting.md         # TODO: Common issues and solutions
 │   └── resources.md               # Additional learning resources
-└── README.md          # This file
+└── README.md                      # This file
 ```
 
 ## Examples Overview
@@ -46,24 +43,24 @@ nuros_cookbook/
 ### 🎯 Beginner: MNIST Digit Classification
 - **What**: Handwritten digit recognition with a simple neural network
 - **GPU Usage**: Minimal (perfect for learning)
-- **Time**: ~5 minutes
+- **Time**: ~10 minutes
 - **Files**: `examples/mnist_example.ipynb`, `examples/mnist_example.py`
 
 ### 🔥 Advanced: Food101 Classification  
 - **What**: Food image classification using EfficientNet
 - **GPU Usage**: Heavy (utilizes full GPU capabilities)
-- **Time**: Several hours
+- **Time**: ~1-2 hours
 - **Files**: `examples/food101_example.py`
 
 ## Slurm Templates
 
-### Basic Job Template (`templates/basic_slurm.sbatch`)
+### Basic Job Template (`templates/basic.sbatch`)
 - Minimal resource request
 - Single GPU
 - Short time limit
 - Perfect for testing and small jobs
 
-### Heavy Compute Template (`templates/heavy_compute.sbatch`)  
+### TODO: Heavy Compute Template (`templates/heavy_compute.sbatch`)  
 - Maximum resource allocation
 - Multiple GPUs if needed
 - Extended time limits
@@ -75,26 +72,6 @@ nuros_cookbook/
 - **[Slurm Basics](docs/slurm-basics.md)** - Essential commands and concepts
 - **[Notebook to Script](docs/notebook-to-script.md)** - Converting development code for production
 - **[Data Management](docs/data-management.md)** - Getting your data onto the server
-
-## Typical Workflow (Quick Overview)
-
-1. **Develop & Test Locally** 
-   - Use Jupyter notebooks for experimentation
-   - Test with small datasets or sample data
-
-2. **Convert to Script**
-   - Use `nbconvert` or manual conversion
-   - Add command-line arguments if needed
-
-3. **Prepare for Slurm**
-   - Choose appropriate template
-   - Set resource requirements
-   - Specify output directories
-
-4. **Submit & Monitor**
-   - Submit job with `sbatch`
-   - Monitor with `squeue` and `sacct`
-   - Collect results
 
 ## Getting Help
 
@@ -113,12 +90,12 @@ Found an issue or have a great example to add?
 
 ```bash
 # Submit a job
-sbatch templates/basic_slurm.sbatch
+sbatch templates/basic.sbatch
 
 # Check job status  
 squeue -u $USER
 
-# View job details
+# View job details (NOT CURRENTLY SUPPORTED)
 sacct -j <job_id> --format=JobID,JobName,State,ExitCode,MaxRSS,GPUUtilization
 
 # Cancel a job
