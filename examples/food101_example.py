@@ -1,4 +1,6 @@
 import os, tarfile, time, math, pathlib
+# TODO: Evaluate if this is absolutely necessary on Nuros
+# limit thread creation; slurm does not seem to like too many threads
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 os.environ["TF_NUM_INTEROP_THREADS"] = "4"
 os.environ["TF_NUM_INTRAOP_THREADS"] = "8"
@@ -13,7 +15,7 @@ for g in gpus:
     tf.config.experimental.set_memory_growth(g, True)
 num_gpus = len(gpus)
 print("Visible GPUs:", num_gpus)
-strategy = tf.distribute.MirroredStrategy() if num_gpus > 1 else tf.distribute.get_strategy()
+
 mixed_precision.set_global_policy("mixed_float16")  # L40 loves this
 
 # --------- Paths ----------
@@ -50,8 +52,7 @@ assert IMAGES_DIR.exists() and META_DIR.exists(), "Food-101 not found after down
 # --------- Build tf.data pipeline ----------
 IMG_SIZE = 380  # use 380 for EfficientNetB4; 600 for B7 (needs more VRAM)
 AUTO = tf.data.AUTOTUNE
-BATCH_PER_GPU = 32  # good starting point on L40 w/ mixed precision
-GLOBAL_BATCH = BATCH_PER_GPU * max(1, num_gpus)
+BATCH_SIZE = 32
 EPOCHS = 30
 
 # Food-101 provides train/test file lists
@@ -80,7 +81,7 @@ def decode_load_resize(path, label):
     img = tf.cast(img, tf.float32) / 255.0
     return img, label
 
-# stronger aug to keep GPUs busy
+# Data augmentation! (to improve generalization)
 def augment(img, label):
     img = tf.image.random_flip_left_right(img)
     img = tf.image.stateless_random_brightness(img, max_delta=0.1, seed=(1,2))
@@ -94,10 +95,11 @@ def make_ds(paths, labels, training=True):
     ds = ds.map(decode_load_resize, num_parallel_calls=4)
     if training:
         ds = ds.map(augment, num_parallel_calls=AUTO)
-    ds = ds.batch(GLOBAL_BATCH, drop_remainder=True)
+    ds = ds.batch(BATCH_SIZE, drop_remainder=True)
     ds = ds.prefetch(AUTO)
     return ds
 
+# Split training data for validation
 val_split = int(0.02 * len(train_paths))
 val_paths, val_y = train_paths[:val_split], train_y[:val_split]
 train_paths, train_y = train_paths[val_split:], train_y[val_split:]
@@ -106,55 +108,66 @@ train_ds = make_ds(train_paths, train_y, training=True)
 val_ds = make_ds(val_paths, val_y, training=False)
 
 print(f"Training samples: {len(train_paths)}, Validation samples: {len(val_paths)}")
-print("First training sample:", train_paths[0], train_y[0])
 
-# --------- Model (EfficientNetB4/B7) ----------
-BACKBONE = "B4"  # change to "B7" later to stress more
-input_shape = tf.keras.Input(shape=(IMG_SIZE,IMG_SIZE,3),name="input_rgb")
-print(input_shape)
-if BACKBONE == "B4":
-    print("trying to build b4...")
-    base = applications.EfficientNetB4(include_top=False, weights=None, input_tensor=input_shape)
-elif BACKBONE == "B7":
-    base = applications.EfficientNetB7(include_top=False, weights=None, input_tensor=input_shape)
-else:
-    raise ValueError
+# Calculate steps per epoch for training metrics
+train_steps = len(train_paths) // BATCH_SIZE
 
-print("Input shape of base model:", base.input_shape)
+# --------- Model (EfficientNetB4) ----------
+BACKBONE = "B4"  # Stick with B4 for reliability, (B7 might be buggy)
+input_shape = tf.keras.Input(shape=(IMG_SIZE, IMG_SIZE, 3), name="input_rgb")
 
-with strategy.scope():
-    base.trainable = True  # full fine-tune for real compute
-    x = base.output
-    x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dropout(0.4)(x)
-    outputs = layers.Dense(NUM_CLASSES, activation="softmax", dtype="float32")(x)
-    model = models.Model(input_shape, outputs)
-    opt = optimizers.Adam(1e-4)
-    model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+# Build EfficientNetB4 from scratch (weights=None means no pretrained weights)
+# This avoids transfer learning complications but still uses the proven architecture
+base = applications.EfficientNetB4(include_top=False, weights=None, input_tensor=input_shape)
+base.trainable = True  # Train all layers from scratch
 
+# Add classification head
+x = base.output
+x = layers.GlobalAveragePooling2D()(x)
+x = layers.Dropout(0.4)(x)
+outputs = layers.Dense(NUM_CLASSES, activation="softmax", dtype="float32")(x)
+model = models.Model(input_shape, outputs)
+
+# Compile model
+opt = optimizers.Adam(1e-4)
+model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+
+print("Model built successfully!")
 model.summary()
 
+# --------- Training setup ----------
 ckpt_dir = HOME / "runs" / "food101_efficientnet" / BACKBONE
 ckpt_dir.mkdir(parents=True, exist_ok=True)
-cbs = [
+
+callbacks_list = [
     callbacks.ModelCheckpoint(str(ckpt_dir / "ckpt-{epoch:02d}.keras"),
                               save_weights_only=False, save_best_only=False),
     callbacks.CSVLogger(str(ckpt_dir / "log.csv")),
 ]
 
+# --------- Training ----------
+print(f"Starting training for {EPOCHS} epochs...")
 t0 = time.time()
 history = model.fit(
     train_ds,
     epochs=EPOCHS,
     validation_data=val_ds,
-    callbacks=cbs,
+    callbacks=callbacks_list,
     verbose=2
 )
 dt = time.time() - t0
-imgs = GLOBAL_BATCH * (train_steps * EPOCHS)
-print(f"Throughput: {imgs/dt:.1f} images/sec (batch={GLOBAL_BATCH}, epochs={EPOCHS}, steps/epoch={train_steps})")
 
-# Final test eval (no augmentation)
+# Calculate throughput
+total_images = BATCH_SIZE * train_steps * EPOCHS
+throughput = total_images / dt
+print(f"Training completed in {dt:.1f} seconds")
+print(f"Throughput: {throughput:.1f} images/sec (batch={BATCH_SIZE}, epochs={EPOCHS}, steps/epoch={train_steps})")
+
+# --------- Final evaluation ----------
+print("Evaluating on test set...")
 test_ds = make_ds(test_paths, test_y, training=False)
-print("Test:", model.evaluate(test_ds, verbose=2))
+test_results = model.evaluate(test_ds, verbose=0)
+print(f"Test Loss: {test_results[0]:.4f}")
+print(f"Test Accuracy: {test_results[1]:.4f} ({test_results[1]*100:.2f}%)")
 
+print(f"Results saved to: {ckpt_dir}")
