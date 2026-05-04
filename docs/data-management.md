@@ -6,7 +6,26 @@ Getting your data onto Nuros and organizing it for machine learning workflows.
 
 You can transfer files to Nuros using standard secure file transfer methods within your disk quota limits. 
 
-### Command Line Options
+### Specifics: From `Google Drive`
+
+You can easily download public Google Drive content directly to the server using **gdown**:
+
+```bash
+# Install once
+pip install gdown
+
+# Download a file
+gdown https://drive.google.com/uc?id=FILE_ID
+
+# Download an entire folder (recursively)
+gdown --folder https://drive.google.com/drive/folders/FOLDER_ID
+```
+
+No sign-in is required for links shared as “Anyone with the link can view.”  
+The folder or file will appear in your current working directory with the same name as in Google Drive.
+
+
+### Command Line Options: `Between PC/Laptop and Nuros`
 
 The following (scp/sftp) should be performed in a terminal on the sending device, not while on Nuros.
 
